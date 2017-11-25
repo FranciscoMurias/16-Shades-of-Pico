@@ -13,7 +13,7 @@ local fov = 60/360
 local planewidth = -2*sin(fov/2)/cos(fov/2)
 local planeheight = 128/planewidth/2
 local screenox = 0
-local screenoy = 64
+local screenoy = 0
 local screenh = 64
 local screenw = 128
 local zbuffer={}
@@ -28,18 +28,24 @@ camera.diry = 0
 camera.planex = 0
 camera.planey = planewidth
 camera.update = function()	
+camera.drawfloor = true
 	camera.planex = planewidth*camera.diry
 	camera.planey = -planewidth*camera.dirx
 end
+
+local floordist = {}
 
 
 --entity
 local entity = {
 	x=8, y=8, z=0.5,
+	px=8,py=8,
 	spr = 4,
 	remove = false,
 	dist = -1,
-	visible = true
+	visible = true,
+	dolevelcollisions = true,
+	radius = 0.25
 }
 
 function entity:new(o)
@@ -49,13 +55,67 @@ function entity:new(o)
 	return o
 end
 
+function entity:preupdate()
+	self.px = self.x
+	self.py = self.y
+end
+function entity:update() 
+end
+function entity:levelcollisions()
+	if (not self.dolevelcollisions) then return end
+
+	local nx,ny = 0,0
+
+	self.x = stepto(self.px,self.x,self.radius-0.01)
+	self.y = stepto(self.py,self.y,self.radius-0.01)
+
+	local xc = flr(self.x)
+	local yc = flr(self.y)
+
+	if (tileissolid(mget(xc,yc))) then
+		self.x = self.px
+		xc = flr(self.x)
+	end
+
+	local xr = self.x - xc
+	local yr = self.y - yc
+
+	if (tileissolid(mget(xc-1,yc)) and xr < self.radius) then
+		xr = self.radius
+		nx = 1
+		ny = 0
+	end
+	if (tileissolid(mget(xc+1,yc)) and xr >= 1 - self.radius) then
+		xr = 1-self.radius
+		nx = -1
+		ny = 0
+	end
+
+	self.x = xc + xr
+	xc = flr(self.x)
+
+	if (tileissolid(mget(xc,yc-1)) and yr < self.radius) then
+		yr = self.radius
+		nx = 0
+		ny = 1
+	end
+	if (tileissolid(mget(xc,yc+1)) and yr >= 1 - self.radius) then
+		yr = 1-self.radius
+		nx = 0
+		ny = -1
+	end
+
+	self.y = yc + yr
+end
+
 --player
 local player = entity:new({
 	ind = 0,
-	dir = rnd(1),
+	dir = 0,
 	dirx = 0,
 	diry = 0
 })
+
 function player:update()
 	if(btn(0, self.ind)) do self.dir -= 0.01 end
 	if(btn(1, self.ind)) do self.dir += 0.01 end
@@ -101,19 +161,23 @@ function _init()
 end
 
 function _update()
-	
-	player1:update()
-	player2:update()
-	
-	--camera.z = 0.5 + 0.15*sin(2*t)
-	camera.z = max(0,min(camera.z,1))
+
+	for e in all(entities) do
+		e:preupdate()
+	end
+	for e in all(entities) do
+		e:update()
+	end
+	for e in all(entities) do
+		e:levelcollisions()
+	end
 end
 
 function _draw()
 	cls(0)
 
-	sspr(0,32,64,16,0,0,128,32)
-	sspr(0,32,64,16,0,64,128,32)
+	--sspr(0,32,64,16,0,0,128,32)
+	--sspr(0,32,64,16,0,64,128,32)
 
 	screenoy = 0
 	camera.x = player1.x
@@ -122,6 +186,7 @@ function _draw()
 	camera.dirx = player1.dirx
 	camera.diry = player1.diry
 	camera.update()
+	camera.drawfloor = false
 	draw3d()
 
 	screenoy = 64
@@ -131,12 +196,12 @@ function _draw()
 	camera.dirx = player2.dirx
 	camera.diry = player2.diry
 	camera.update()
+	camera.drawfloor = false
 	draw3d()
 
 	drawmap()	
 	
 	print(stat(1),1,1,7)
-	--line(32,0,32,63,12)
 end
 
 function drawmap()
@@ -166,7 +231,13 @@ function draw3d()
 	local sleft = screenox
 	local sright = screenox+screenw
 
-	
+	for i=0,screenh/2-1 do
+		floordist[i] = abs((1-camera.z) / ((i - screenh/2)/planeheight))
+	end
+	for i=screenh/2,screenh-1 do
+		floordist[i] = abs(camera.z / ((i - screenh/2)/planeheight))
+	end
+
 	-- level render
 	for x=0,127 do
 		-- raycasting
@@ -240,9 +311,11 @@ function draw3d()
 			local l = flr(h * camera.z)
 			local bottom = svmid + l
 			local top = bottom - h
+			wallx -= flr(wallx)
+			
 
-			if (dither(d,x)) then
-				wallx -= flr(wallx)
+			if (dither(d,x)) then				
+
 				texx = flr(wallx * 8)
 				if (not side and raydirx > 0) then texx = 8-texx-1 end
 				if (side and raydiry < 0) then texx = 8-texx-1 end					
@@ -250,28 +323,39 @@ function draw3d()
 				local ya = top
 				local inc = h*0.125
 				local yb = ya+inc
+				local color
 				for yi=0,7 do
+					if (ya >= sbottom) then break end
 					if (max(ya,stop) < yb) then
-						local color = sget(24+flr(texx),yi)
-						line(x,max(ya,stop),x,min(yb-1,sbottom-1),color)
-
-						
+						color = sget(24+flr(texx),yi)
+						line(x,max(ya,stop),x,min(yb,sbottom-1),color)
 					end
 					ya = yb
 					yb += inc
 				end
-				if (x==32) print(sbottom..' '..yb,1,8,7)
-					
-				--[[
-				if (side) then
-					line(x,top,x,bottom,5)
-				else
-					line(x,top,x,bottom,6)
-				end
-				]]--
+
 			else
 				line(x,top,x,bottom,0)
 			end
+
+			--floor render
+			local startf = min(bottom+1,sbottom-1)
+			local endf = sbottom-1
+			if (camera.drawfloor and startf<sbottom) then
+				for y=startf,endf do				
+					local fx = camera.x + raydirx * floordist[y-screenoy]
+					local fy = camera.y + raydiry * floordist[y-screenoy]
+					--local fx = x1 + y/(endf-startf) * (x2-x1)
+					--local fy = y1 + y/(endf-startf) * (y2-y1)
+
+					fx -= flr(fx)
+					fy -= flr(fy)
+					if (color != 7 and (fx < 0.05 or fx > 0.95 or fy < 0.05 or fy > 0.95)) then
+						pset(x,y,8)
+					end				
+				end
+			end
+
 
 			--floor and sky
 			--if (max(top,stop)>stop+1) then line(x,stop,x,top-1,12) end
@@ -293,45 +377,48 @@ function draw3d()
 	
 	for e in all(entities) do
 		if (e.dist > 0 and e.dist < 25) then
-		local sprx = e.x - camera.x
-		local spry = e.y - camera.y
-		local invdet = 1 / (camera.planex*camera.diry - camera.dirx*camera.planey)
-		local transx = invdet * (camera.diry*sprx - camera.dirx*spry)
-		local transy = invdet * (-camera.planey*sprx + camera.planex*spry)
-		--local vmovescreen = flr(e.z / transy)
+			local sprx = e.x - camera.x
+			local spry = e.y - camera.y
+			local invdet = 1 / (camera.planex*camera.diry - camera.dirx*camera.planey)
+			local transx = invdet * (camera.diry*sprx - camera.dirx*spry)
+			local transy = invdet * (-camera.planey*sprx + camera.planex*spry)
+			--local vmovescreen = flr(e.z / transy)
 
-		local l = screenoy+screenh/2+flr(planeheight / transy / 2 * camera.z)
-		local sprscreenx = flr(64 * (1 + transx/transy))
-		local sprsize = abs(flr(planeheight / transy))
-		local sprwidth = sprsize / 2
-		local sprheight = sprsize / 2
-		local xstart = flr(-sprwidth/2 + sprscreenx)
-		local xend = flr(sprwidth/2 + sprscreenx)
-		local ystart = flr(-sprheight + svmid+sprsize*(camera.z-0.5))
-		local yend = flr(sprheight + svmid+sprsize*(camera.z-0.5))
+			local l = screenoy+screenh/2+flr(planeheight / transy / 2 * camera.z)
+			local sprscreenx = flr(64 * (1 + transx/transy))
+			local sprsize = abs(flr(planeheight / transy))
+			local sprwidth = sprsize / 2
+			local sprheight = sprsize / 2
+			local xstart = flr(-sprwidth/2 + sprscreenx)
+			local xend = flr(sprwidth/2 + sprscreenx)
+			local ystart = flr(-sprheight + svmid+sprsize*(camera.z-0.5))
+			local yend = flr(sprheight + svmid+sprsize*(camera.z-0.5))
 
-		for stripe=max(xstart,sleft),min(xend-1,sright-1) do
-			if (transy > 0.2 and transy < zbuffer[stripe] and dither(transy, stripe+1)) then
-				local texx = flr((stripe - xstart) * 8 / sprwidth)
-				local ya = ystart
-				local inc = sprheight*0.125
-				local yb = ya+inc
-								
-				for yi=0,15 do
-					if (max(ya,0) < yb) then
-						local color = sget(32+texx,yi%8)
-						if (color != 0) then line(stripe,max(ya,stop),stripe,min(yb-1,sbottom-1),color) end
+			for stripe=max(xstart,sleft),min(xend-1,sright-1) do
+				if (transy > 0.2 and transy < zbuffer[stripe] and dither(transy, stripe+1)) then
+					local texx = flr((stripe - xstart) * 8 / sprwidth)
+					local ya = ystart
+					local inc = sprheight*0.125
+					local yb = ya+inc
+									
+					for yi=0,15 do
+						if (max(ya,0) < yb) then
+							local color = sget(32+texx,yi%8)
+							if (color != 0) then line(stripe,max(ya,stop),stripe,min(yb-1,sbottom-1),color) end
+						end
+						ya = yb
+						yb += inc
 					end
-					ya = yb
-					yb += inc
+					
+					--line(stripe,ystart,stripe,yend,8)
 				end
-				
-				--line(stripe,ystart,stripe,yend,8)
 			end
-		end
 		end
 	end
 end
+
+
+--Util
 
 function dither(d,x)
 	if (d < 2) return true;
@@ -360,6 +447,17 @@ function qsort(t, cmp, i, j)
 		qsort(t, cmp, i, p - 1)
 		qsort(t, cmp, p + 1, j)  
 	end
+end
+
+function stepto(a,b,x)
+	local d = abs(b-a)
+	if (d<x) then return b end
+	return a + x*sgn(b-a)
+end
+
+function tileissolid(t)
+	if (t==2) then return true end
+	return false
 end
 
 
