@@ -18,39 +18,77 @@ local screenh = 64
 local screenw = 128
 local zbuffer={}
 
-local player = {}
-player.x = 68/mapc
-player.y = 68/mapc
-player.z=0.5
-player.dir = 0
-player.dirx = -1
-player.diry = 0
-player.planex = 0
-player.planey = planewidth
+local camera = {}
+camera.x = 68/mapc
+camera.y = 68/mapc
+camera.z=0.5
+camera.dir = 0
+camera.dirx = -1
+camera.diry = 0
+camera.planex = 0
+camera.planey = planewidth
+camera.update = function()	
+	camera.planex = planewidth*camera.diry
+	camera.planey = -planewidth*camera.dirx
+end
 
 
 --entity
-local entity = {}
-entity.__index = entity
+local entity = {
+	x=8, y=8, z=0.5,
+	spr = 4,
+	remove = false,
+	dist = -1,
+	visible = true
+}
 
-function entity.new(init)
-	local self = setmetatable({}, entity)
-	self.x = 8
-	self.y = 8
-	self.z = 0.5
-	self.spr = 4
-	self.remove = false
-	for k,v in pairs(init) do
-		 self[k] = v 
-	end
-	return self
+function entity:new(o)
+	o = o or {}
+	setmetatable(o,self)
+	self.__index = self
+	return o
 end
 
+--player
+local player = entity:new({
+	ind = 0,
+	dir = rnd(1),
+	dirx = 0,
+	diry = 0
+})
+function player:update()
+	if(btn(0, self.ind)) do self.dir -= 0.01 end
+	if(btn(1, self.ind)) do self.dir += 0.01 end
+
+	self.dirx = cos(self.dir)
+	self.diry = sin(self.dir)	
+
+	if(btn(2,self.ind)) do 
+		self.x += self.dirx/8
+		self.y += self.diry/8
+	end
+	if(btn(3,self.ind)) do 
+		self.x -= self.dirx/8
+		self.y -= self.diry/8
+	end
+
+	if (btn(4,self.ind)) then self.z += 0.05 end
+	if (btn(5,self.ind)) then self.z -= 0.05 end
+	self.z = max(0,min(self.z,1))
+end
+
+
 local entities = {}
+local player1, player2
 
 
 function _init()
-	for i=0,25 do
+	player1 = player:new({ind=0})
+	player2 = player:new({ind=1})
+	add(entities,player1)
+	add(entities,player2)
+
+	--[[for i=0,25 do
 		local e = entity.new{}
 		repeat
 			e.x = flr(rnd(mapw))
@@ -59,50 +97,51 @@ function _init()
 		e.x += 0.5
 		e.y += 0.5
 		add(entities,e)
-	end
+	end]]--
 end
 
 function _update()
-	if(btn(0)) do player.dir += 0.01 end
-	if(btn(1)) do player.dir -= 0.01 end
-	player.dirx = cos(player.dir)
-	player.diry = sin(player.dir)	
-	player.planex = planewidth*cos(player.dir-0.25)
-	player.planey = planewidth*sin(player.dir-0.25)
-	if(btn(2)) do 
-		player.x += player.dirx/8
-		player.y += player.diry/8
-		t += 1/30
-	end
-	if(btn(3)) do 
-		player.x -= player.dirx/8
-		player.y -= player.diry/8
-		t += 1/30
-	end
-
-	if (btn(4)) then player.z += 0.05 end
-	if (btn(5)) then player.z -= 0.05 end
 	
-	--player.z = 0.5 + 0.15*sin(2*t)
-	player.z = max(0,min(player.z,1))
+	player1:update()
+	player2:update()
+	
+	--camera.z = 0.5 + 0.15*sin(2*t)
+	camera.z = max(0,min(camera.z,1))
 end
 
 function _draw()
 	cls(0)
+
 	screenoy = 0
+	camera.x = player1.x
+	camera.y = player1.y
+	camera.z = player1.z
+	camera.dirx = player1.dirx
+	camera.diry = player1.diry
+	camera.update()
 	draw3d()
+
 	screenoy = 64
+	camera.x = player2.x
+	camera.y = player2.y
+	camera.z = player2.z
+	camera.dirx = player2.dirx
+	camera.diry = player2.diry
+	camera.update()
 	draw3d()
 
 	drawmap()	
 	
 	print(stat(1),1,1,7)
+	--line(32,0,32,63,12)
 end
 
 function drawmap()
 	local scale = 1/4
-	local px = player.x*8*scale + 64 -16
-	local py = player.y*8*scale + 64 -16
+	local p1x = player1.x*8*scale + 64 -16
+	local p1y = player1.y*8*scale + 64 -16
+	local p2x = player2.x*8*scale + 64 -16
+	local p2y = player2.y*8*scale + 64 -16
 	for ix=1,mapw do
 		for iy=1,maph do
 			local c = mget(ix-1,iy-1)
@@ -111,8 +150,10 @@ function drawmap()
 			rectfill(x,y,x+mapc*scale-1,y+mapc*scale-1,c)
 		end
 	end
-	line(px,py,px+10*player.dirx,py+10*player.diry,11)
-	pset(px,py,12)	
+	line(p1x,p1y,p1x+10*player1.dirx,p1y+10*player1.diry,11)
+	line(p2x,p2y,p2x+10*player2.dirx,p2y+10*player2.diry,11)
+	pset(p1x,p1y,12)	
+	pset(p2x,p2y,12)
 end
 
 function draw3d()
@@ -121,14 +162,16 @@ function draw3d()
 	local sbottom = screenoy+screenh
 	local sleft = screenox
 	local sright = screenox+screenw
+
+	
 	-- level render
 	for x=0,127 do
 		-- raycasting
 		local camerax = 2*x/128 -1
-		local rayposx = player.x
-		local rayposy = player.y
-		local raydirx = player.dirx + player.planex * camerax;
-		local raydiry = player.diry + player.planey * camerax;
+		local rayposx = camera.x
+		local rayposy = camera.y
+		local raydirx = camera.dirx + camera.planex * camerax;
+		local raydiry = camera.diry + camera.planey * camerax;
 		
 		local mapx = flr(rayposx)
 		local mapy = flr(rayposy)
@@ -191,7 +234,7 @@ function draw3d()
 			-- wall render
 			local d = zbuffer[x]
 			local h = flr(planeheight / d)
-			local l = flr(h * player.z)
+			local l = flr(h * camera.z)
 			local bottom = svmid + l
 			local top = bottom - h
 
@@ -208,10 +251,13 @@ function draw3d()
 					if (max(ya,stop) < yb) then
 						local color = sget(24+flr(texx),yi)
 						line(x,max(ya,stop),x,min(yb-1,sbottom-1),color)
+
+						
 					end
 					ya = yb
 					yb += inc
 				end
+				if (x==32) print(sbottom..' '..yb,1,8,7)
 					
 				--[[
 				if (side) then
@@ -230,28 +276,34 @@ function draw3d()
 
 	--sprite render
 	
-	for e in all(entities) do e.dist = sqrdist(e.x,e.y,player.x,player.y) end
+	for e in all(entities) do 
+		if (e.visible) then
+			e.dist = sqrdist(e.x,e.y,camera.x,camera.y) 
+		else
+			e.dist = -1
+		end
+	end
 	
 	qsort(entities, function(a,b) return a.dist > b.dist end)
 	
 	for e in all(entities) do
-		if (e.dist < 25) then
-		local sprx = e.x - player.x
-		local spry = e.y - player.y
-		local invdet = 1 / (player.planex*player.diry - player.dirx*player.planey)
-		local transx = invdet * (player.diry*sprx - player.dirx*spry)
-		local transy = invdet * (-player.planey*sprx + player.planex*spry)
+		if (e.dist > 0 and e.dist < 25) then
+		local sprx = e.x - camera.x
+		local spry = e.y - camera.y
+		local invdet = 1 / (camera.planex*camera.diry - camera.dirx*camera.planey)
+		local transx = invdet * (camera.diry*sprx - camera.dirx*spry)
+		local transy = invdet * (-camera.planey*sprx + camera.planex*spry)
 		--local vmovescreen = flr(e.z / transy)
 
-		local l = screenoy+screenh/2+flr(planeheight / transy / 2 * player.z)
+		local l = screenoy+screenh/2+flr(planeheight / transy / 2 * camera.z)
 		local sprscreenx = flr(64 * (1 + transx/transy))
 		local sprsize = abs(flr(planeheight / transy))
-		local sprwidth = sprsize / 3
-		local sprheight = sprsize / 3
+		local sprwidth = sprsize / 2
+		local sprheight = sprsize / 2
 		local xstart = flr(-sprwidth/2 + sprscreenx)
 		local xend = flr(sprwidth/2 + sprscreenx)
-		local ystart = flr(-sprheight + svmid+sprsize*(player.z-0.5))
-		local yend = flr(sprheight + svmid+sprsize*(player.z-0.5))
+		local ystart = flr(-sprheight + svmid+sprsize*(camera.z-0.5))
+		local yend = flr(sprheight + svmid+sprsize*(camera.z-0.5))
 
 		for stripe=max(xstart,sleft),min(xend-1,sright-1) do
 			if (transy > 0.2 and transy < zbuffer[stripe] and dither(transy, stripe+1)) then
@@ -259,9 +311,7 @@ function draw3d()
 				local ya = ystart
 				local inc = sprheight*0.125
 				local yb = ya+inc
-				
-
-				
+								
 				for yi=0,15 do
 					if (max(ya,0) < yb) then
 						local color = sget(32+texx,yi%8)
@@ -276,8 +326,6 @@ function draw3d()
 		end
 		end
 	end
-	
-	
 end
 
 function dither(d,x)
